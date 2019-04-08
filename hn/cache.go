@@ -20,13 +20,13 @@ func ItemCacheSingleton() *ItemCache {
   return &internal
 }
 
-func (c *ItemCache) put(id int, item *Item) {
+func (c *ItemCache) Put(id int, item *Item) {
   c.Lock()
   defer c.Unlock()
   c.cache[id] = item
 }
 
-func (c *ItemCache) get(id int) (*Item, bool) {
+func (c *ItemCache) Get(id int) (*Item, bool) {
   c.RLock()
   defer c.RUnlock()
   item, ok := c.cache[id]

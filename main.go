@@ -21,6 +21,7 @@ func main() {
 	tpl := template.Must(template.ParseFiles("./index.gohtml"))
 
   var client hn.Client
+	client.Singleton()
 	http.HandleFunc("/", handler(&client, numStories, tpl))
 
 	// Start the server

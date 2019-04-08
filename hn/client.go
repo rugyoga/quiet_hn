@@ -20,36 +20,35 @@ type Client struct {
 	cache *ItemCache
 }
 
-func (c *Client) defaultify() {
-	if c.cache == nil {
-		c.apiBase = apiBase
-		c.cache = ItemCacheSingleton()
+func (client *Client) Singleton() {
+	if client.cache == nil {
+		client.apiBase = apiBase
+		client.cache = ItemCacheSingleton()
 	}
 }
 
-func (c *Client) TopItems() ([]int, error) {
-	c.defaultify()
-	resp, err := http.Get(fmt.Sprintf("%s/topstories.json", c.apiBase))
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+func (client *Client) TopItems() ([]int, error) {
 	var ids []int
+	resp, err := http.Get(fmt.Sprintf("%s/topstories.json", client.apiBase))
+	if err != nil { return nil, err }
 	err = json.NewDecoder(resp.Body).Decode(&ids)
+	if err != nil { return nil, err }
+	err = resp.Body.Close()
+	if err != nil { return nil, err }
 	return ids, err
 }
 
-func (c *Client) processItem(id int, items chan *ItemWithUrl, storyCount Counter) {
-	item, ok := c.cache.get(id)
+func (client *Client) processItem(id int, items chan *ItemWithUrl, storyCount Counter) {
+	item, ok := client.cache.Get(id)
 	if !ok {
-		c.defaultify()
-		resp, err := http.Get(fmt.Sprintf("%s/item/%d.json", c.apiBase, id))
+		resp, err := http.Get(fmt.Sprintf("%s/item/%d.json", client.apiBase, id))
 		if err != nil { return }
-		defer resp.Body.Close()
 		dec := json.NewDecoder(resp.Body)
 		err = dec.Decode(&item)
 		if err != nil { return }
-		c.cache.put(id, item)
+		err = resp.Body.Close()
+		if err != nil { return }
+		client.cache.Put(id, item)
 	}
 	if itemWithUrl := addHost(item); isStoryLink(itemWithUrl) {
 	  items <- itemWithUrl
@@ -57,11 +56,9 @@ func (c *Client) processItem(id int, items chan *ItemWithUrl, storyCount Counter
   }
 }
 
-var dashes = [...]string { "", "-", "--", "---", "----", "-----", "------" }
-
-func (c *Client) worker(w int, storyCount Counter, coreCount Counter, nextStoryId IntValue, items chan *ItemWithUrl) {
+func (client *Client) worker(w int, storyCount Counter, coreCount Counter, nextStoryId IntValue, items chan *ItemWithUrl) {
 	for !storyCount.done() {
-    c.processItem(nextStoryId(), items, storyCount)
+		client.processItem(nextStoryId(), items, storyCount)
   }
 	coreCount.incr()
 	if coreCount.done() {
@@ -73,7 +70,6 @@ type IntValue func() int
 type Action func()
 type Condition func() bool
 type Counter struct {
-	i *int
   incr Action
 	done Condition
 }
@@ -84,23 +80,22 @@ func mkNextItem(items []int) IntValue {
   return func() int {
 		mutex.Lock()
 		defer mutex.Unlock()
-		id := ids[i]
+		item := items[i]
 		i++
-		return id
+		return item
 	}
 }
 
 func mkCounter(max int) Counter {
 	i := max
-	var mutex sync.Mutex
+	var mutex sync.RWMutex
 	return Counter{
-		i: &i,
 		incr: func() { mutex.Lock(); defer mutex.Unlock(); i--  },
-		done: func() bool { mutex.Lock(); defer mutex.Unlock(); return i <= 0 },
+		done: func() bool { mutex.RLock(); defer mutex.RUnlock(); return i <= 0 },
 	}
 }
 
-const NumOfCores=6
+const NumOfCores=12
 
 func (client *Client) RetrieveStories(numStories int, ids []int) []*ItemWithUrl {
 	var stories []*ItemWithUrl
@@ -113,9 +108,7 @@ func (client *Client) RetrieveStories(numStories int, ids []int) []*ItemWithUrl 
 		go client.worker(core, storyCount, coreCount, nextStoryId, itemWithUrls)
 	}
 
-	for {
-		item, ok := <- itemWithUrls
-		if !ok { break }
+	for item, ok := <- itemWithUrls; ok; item, ok = <- itemWithUrls{
 		stories = append(stories, item)
 	}
 
@@ -145,8 +138,8 @@ func isStoryLink(item *ItemWithUrl) bool {
 
 func addHost(item *Item) *ItemWithUrl {
 	ret := ItemWithUrl{Item: item}
-	if url, err := url.Parse(ret.Item.URL); err == nil {
-		ret.Host = strings.TrimPrefix(url.Hostname(), "www.")
+	if parsedUrl, err := url.Parse(ret.Item.URL); err == nil {
+		ret.Host = strings.TrimPrefix(parsedUrl.Hostname(), "www.")
 	}
 	return &ret
 }
